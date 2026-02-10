@@ -330,6 +330,7 @@ class _HomeState extends State<Home> {
     return CupertinoTabScaffold(
       tabBar: CupertinoTabBar(items: const [
         BottomNavigationBarItem(icon: Icon(CupertinoIcons.home), label: "Home"),
+        BottomNavigationBarItem(icon: Icon(CupertinoIcons.music_note_list), label: "Playlist"),
         BottomNavigationBarItem(icon: Icon(CupertinoIcons.star), label: "Plan"),
         BottomNavigationBarItem(icon: Icon(CupertinoIcons.settings), label: "Settings"),
       ]),
@@ -338,11 +339,184 @@ class _HomeState extends State<Home> {
           case 0:
             return HomeList(box: widget.box);
           case 1:
+            return PlaylistPage();
+          case 2:
             return PlanPage(box: widget.box);
           default:
             return Settings(box: widget.box);
         }
       },
+    );
+  }
+}
+
+class PlaylistPage extends StatefulWidget {
+  const PlaylistPage({super.key});
+
+  @override
+  State<PlaylistPage> createState() => _PlaylistPageState();
+}
+
+class _PlaylistPageState extends State<PlaylistPage> {
+  final TextEditingController _playlistController = TextEditingController();
+  late Box playlistBox;
+
+  Map<int, bool> isPlayingMap = {};
+
+  @override
+  initState() {
+    super.initState();
+    _initPlaylistBox();
+  }
+
+  _initPlaylistBox() async {
+    playlistBox = await Hive.openBox("playlists");
+    for (int i = 0; i < playlistBox.length; i++) {
+      isPlayingMap[i] = false;
+    }
+    setState(() {});
+  }
+
+  _addPlaylist() {
+    showCupertinoModalPopup(
+      context: context,
+      builder: (context) => CupertinoActionSheet(
+        title: const Text("Add Playlist"),
+        message: CupertinoTextField(
+          controller: _playlistController,
+          placeholder: "Playlist name",
+        ),
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              if (_playlistController.text.trim().isNotEmpty) {
+                playlistBox.add(_playlistController.text.trim());
+                isPlayingMap[playlistBox.length - 1] = false;
+                _playlistController.clear();
+                setState(() {});
+              }
+              Navigator.pop(context);
+            },
+            child: const Text("Add"),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Cancel"),
+          isDefaultAction: true,
+        ),
+      ),
+    );
+  }
+
+  _deletePlaylist(int index) {
+    playlistBox.deleteAt(index);
+    isPlayingMap.remove(index);
+    final newMap = <int, bool>{};
+    for (int i = 0; i < playlistBox.length; i++) {
+      newMap[i] = isPlayingMap[i] ?? false;
+    }
+    isPlayingMap = newMap;
+    setState(() {});
+  }
+
+  _togglePlayPause(int index) {
+    setState(() {
+      isPlayingMap[index] = !(isPlayingMap[index] ?? false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!Hive.isBoxOpen("playlists")) {
+      return const CupertinoPageScaffold(
+        navigationBar: CupertinoNavigationBar(
+          middle: Text("Playlists"),
+        ),
+        child: Center(child: CupertinoActivityIndicator()),
+      );
+    }
+
+    return CupertinoPageScaffold(
+      navigationBar: const CupertinoNavigationBar(
+        middle: Text("Playlists"),
+      ),
+      child: SafeArea(
+        child: Stack(
+          children: [
+            playlistBox.isEmpty
+                ? const Center(
+              child: Text(
+                "No playlists yet",
+                style: TextStyle(color: CupertinoColors.systemGrey),
+              ),
+            )
+                : ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              itemCount: playlistBox.length,
+              itemBuilder: (context, index) {
+                final playlistName = playlistBox.getAt(index).toString();
+                final isPlaying = isPlayingMap[index] ?? false;
+
+                return Container(
+                  margin: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: CupertinoColors.darkBackgroundGray,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          CupertinoButton(
+                            padding: EdgeInsets.zero,
+                            child: Icon(
+                              isPlaying ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
+                              color: CupertinoColors.systemGreen,
+                            ),
+                            onPressed: () => _togglePlayPause(index),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            playlistName,
+                            style: const TextStyle(
+                              color: CupertinoColors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        child: const Icon(
+                          CupertinoIcons.delete,
+                          color: CupertinoColors.systemGrey,
+                        ),
+                        onPressed: () => _deletePlaylist(index),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            Positioned(
+              bottom: 20,
+              right: 20,
+              child: CupertinoButton(
+                padding: const EdgeInsets.all(14),
+                color: CupertinoColors.systemGreen,
+                borderRadius: BorderRadius.circular(30),
+                child: const Icon(CupertinoIcons.plus),
+                onPressed: _addPlaylist,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
