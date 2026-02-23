@@ -1,517 +1,804 @@
+import 'dart:async';
+import 'dart:math';
 import 'package:flutter/cupertino.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:hive/hive.dart';
-import 'package:flutter/material.dart';
-import 'package:local_auth/local_auth.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:webview_flutter/webview_flutter.dart';
-import 'dart:async';
-import 'dart:convert';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
-  final box = await Hive.openBox("database");
-  runApp(MyApp(box: box));
+  await Hive.openBox('transactions');
+  await Hive.openBox('orders');
+  await Hive.openBox('users');
+  runApp(QuickBiteApp());
 }
 
-class MyApp extends StatefulWidget {
-  final Box box;
-  const MyApp({super.key, required this.box});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  late final Box box;
-  @override
-  void initState() {
-    super.initState();
-    box = widget.box;
-  }
+class QuickBiteApp extends StatelessWidget {
+  QuickBiteApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return CupertinoApp(
-        theme: const CupertinoThemeData(primaryColor: CupertinoColors.label),
-        debugShowCheckedModeBanner: false,
-        home: (box.get("username") == null)
-            ? Signup(box: box)
-            : Homepage(box: box));
+      debugShowCheckedModeBanner: false,
+      theme: const CupertinoThemeData(
+        brightness: Brightness.light,
+        primaryColor: CupertinoColors.activeGreen,
+        barBackgroundColor: CupertinoColors.white,
+        scaffoldBackgroundColor: CupertinoColors.systemBackground,
+      ),
+      home: LoginPage(),
+    );
   }
 }
 
-// ... (Imports and main remain the same)
-
-class Homepage extends StatefulWidget {
-  final Box box;
-  const Homepage({super.key, required this.box});
+class LoginPage extends StatefulWidget {
+  LoginPage({super.key});
 
   @override
-  State<Homepage> createState() => _HomepageState();
+  State<LoginPage> createState() => _LoginPageState();
 }
 
-class _HomepageState extends State<Homepage> {
-  final LocalAuthentication auth = LocalAuthentication();
-  late final Box box;
-  final TextEditingController _username = TextEditingController();
-  final TextEditingController _password = TextEditingController();
-  bool hidePassword = true;
+class _LoginPageState extends State<LoginPage> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _isLoading = false;
+  bool _obscurePassword = true;
 
-  @override
-  void initState() {
-    super.initState();
-    box = widget.box;
-  }
+  Future<void> _login() async {
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+      _showDialog('Error', 'Please fill in all fields');
+      return;
+    }
 
-  Future<void> authenticate() async {
-    try {
-      final bool didAuthenticate = await auth.authenticate(
-        localizedReason: 'Please authenticate to login',
-      );
-      if (didAuthenticate) {
-        setState(() {
-          _username.text = box.get("username") ?? '';
-          _password.text = box.get("password") ?? '';
-        });
+    setState(() => _isLoading = true);
+
+    await Future.delayed(const Duration(seconds: 1));
+
+    final usersBox = Hive.box('users');
+    bool userFound = false;
+
+    for (var key in usersBox.keys) {
+      final userData = usersBox.get(key);
+      if (userData['email'] == _emailController.text &&
+          userData['password'] == _passwordController.text) {
+        userFound = true;
+        break;
       }
-    } catch (e) {
-      debugPrint('Error: $e');
+    }
+
+    setState(() => _isLoading = false);
+
+    if (userFound && mounted) {
+      Navigator.pushReplacement(
+        context,
+        CupertinoPageRoute(builder: (_) => HomePage()),
+      );
+    } else {
+      _showDialog('Error', 'Invalid email or password');
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return CupertinoPageScaffold(
-      backgroundColor: const Color(0xFF121212), // Spotify Dark Background
-      child: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 30),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(CupertinoIcons.music_house_fill, size: 80, color: Color(0xFF1DB954)),
-                const SizedBox(height: 20),
-                const Text(
-                  'Millions of songs.\nFree on Spotify.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: CupertinoColors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 28,
-                    letterSpacing: -1,
-                  ),
-                ),
-                const SizedBox(height: 40),
-                CupertinoTextField(
-                  controller: _username,
-                  padding: const EdgeInsets.all(16),
-                  placeholder: "Email or username",
-                  placeholderStyle: const TextStyle(color: CupertinoColors.systemGrey),
-                  style: const TextStyle(color: CupertinoColors.white),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF282828),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                CupertinoTextField(
-                  controller: _password,
-                  padding: const EdgeInsets.all(16),
-                  placeholder: "Password",
-                  obscureText: hidePassword,
-                  placeholderStyle: const TextStyle(color: CupertinoColors.systemGrey),
-                  style: const TextStyle(color: CupertinoColors.white),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF282828),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  suffix: CupertinoButton(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Icon(
-                      hidePassword ? CupertinoIcons.eye_fill : CupertinoIcons.eye_slash_fill,
-                      color: CupertinoColors.systemGrey,
-                    ),
-                    onPressed: () => setState(() => hidePassword = !hidePassword),
-                  ),
-                ),
-                const SizedBox(height: 30),
-                SizedBox(
-                  width: double.infinity,
-                  child: CupertinoButton(
-                    color: const Color(0xFF1DB954), // Spotify Green
-                    borderRadius: BorderRadius.circular(30),
-                    child: const Text(
-                      'Log In',
-                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black),
-                    ),
-                    onPressed: () {
-                      if (_username.text.trim() == box.get("username") &&
-                          _password.text.trim() == box.get("password")) {
-                        Navigator.pushReplacement(
-                          context,
-                          CupertinoPageRoute(builder: (context) => Home(box: box)),
-                        );
-                      } else {
-                        showCupertinoDialog(
-                          context: context,
-                          builder: (context) => CupertinoAlertDialog(
-                            title: const Text("Login Failed"),
-                            content: const Text("Check your credentials and try again."),
-                            actions: [
-                              CupertinoButton(
-                                child: const Text("OK"),
-                                onPressed: () => Navigator.pop(context),
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-                    },
-                  ),
-                ),
-                const SizedBox(height: 15),
-                if (box.get("biometrics") == true)
-                  CupertinoButton(
-                    child: const Icon(Icons.fingerprint, size: 40, color: Color(0xFF1DB954)),
-                    onPressed: () => authenticate(),
-                  ),
-                CupertinoButton(
-                  child: const Text('Erase Data', style: TextStyle(color: CupertinoColors.systemGrey)),
-                  onPressed: () {
-                    showCupertinoDialog(
-                      context: context,
-                      builder: (context) => CupertinoAlertDialog(
-                        content: const Text("Are you sure to delete all data?"),
-                        actions: [
-                          CupertinoButton(child: const Text("Cancel"), onPressed: () => Navigator.pop(context)),
-                          CupertinoButton(
-                            child: const Text("Yes", style: TextStyle(color: CupertinoColors.destructiveRed)),
-                            onPressed: () {
-                              box.clear();
-                              Navigator.pushReplacement(context, CupertinoPageRoute(builder: (context) => Signup(box: box)));
-                            },
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class Signup extends StatefulWidget {
-  final Box box;
-  const Signup({super.key, required this.box});
-
-  @override
-  State<Signup> createState() => _SignupState();
-}
-
-class _SignupState extends State<Signup> {
-  late final Box box;
-  final TextEditingController _username = TextEditingController();
-  final TextEditingController _password = TextEditingController();
-  bool hidePassword = true;
-
-  @override
-  void initState() {
-    super.initState();
-    box = widget.box;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return CupertinoPageScaffold(
-      backgroundColor: const Color(0xFF121212),
-      child: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 30),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(CupertinoIcons.music_note_2, size: 60, color: Color(0xFF1DB954)),
-                const SizedBox(height: 20),
-                const Text(
-                  'Sign up for free to\nstart listening.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: CupertinoColors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 26,
-                  ),
-                ),
-                const SizedBox(height: 40),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text("What's your email?", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(height: 8),
-                CupertinoTextField(
-                  controller: _username,
-                  padding: const EdgeInsets.all(16),
-                  style: const TextStyle(color: CupertinoColors.white),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF282828),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text("Create a password", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(height: 8),
-                CupertinoTextField(
-                  controller: _password,
-                  padding: const EdgeInsets.all(16),
-                  obscureText: hidePassword,
-                  style: const TextStyle(color: CupertinoColors.white),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF282828),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  suffix: CupertinoButton(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Icon(
-                      hidePassword ? CupertinoIcons.eye_fill : CupertinoIcons.eye_slash_fill,
-                      color: CupertinoColors.systemGrey,
-                    ),
-                    onPressed: () => setState(() => hidePassword = !hidePassword),
-                  ),
-                ),
-                const SizedBox(height: 40),
-                SizedBox(
-                  width: 200,
-                  child: CupertinoButton(
-                    color: const Color(0xFF1DB954),
-                    borderRadius: BorderRadius.circular(30),
-                    child: const Text('Next', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-                    onPressed: () async {
-                      await box.put("username", _username.text.trim());
-                      await box.put("password", _password.text.trim());
-                      await box.put("biometrics", false);
-
-                      if (!mounted) return;
-                      Navigator.pushReplacement(context, CupertinoPageRoute(builder: (context) => Homepage(box: box)));
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ... (Rest of the Home, HomeList, PlanPage, PaymentPage, and Settings remain the same)
-class Home extends StatefulWidget {
-  final Box box;
-  const Home({super.key, required this.box});
-
-  @override
-  State<Home> createState() => _HomeState();
-}
-
-class _HomeState extends State<Home> {
-  @override
-  Widget build(BuildContext context) {
-    return CupertinoTabScaffold(
-      tabBar: CupertinoTabBar(items: const [
-        BottomNavigationBarItem(icon: Icon(CupertinoIcons.home), label: "Home"),
-        BottomNavigationBarItem(icon: Icon(CupertinoIcons.music_note_list), label: "Playlist"),
-        BottomNavigationBarItem(icon: Icon(CupertinoIcons.star), label: "Plan"),
-        BottomNavigationBarItem(icon: Icon(CupertinoIcons.settings), label: "Settings"),
-      ]),
-      tabBuilder: (context, index) {
-        switch (index) {
-          case 0:
-            return HomeList(box: widget.box);
-          case 1:
-            return PlaylistPage();
-          case 2:
-            return PlanPage(box: widget.box);
-          default:
-            return Settings(box: widget.box);
-        }
-      },
-    );
-  }
-}
-
-class PlaylistPage extends StatefulWidget {
-  const PlaylistPage({super.key});
-
-  @override
-  State<PlaylistPage> createState() => _PlaylistPageState();
-}
-
-class _PlaylistPageState extends State<PlaylistPage> {
-  final TextEditingController _playlistController = TextEditingController();
-  late Box playlistBox;
-
-  Map<int, bool> isPlayingMap = {};
-
-  @override
-  initState() {
-    super.initState();
-    _initPlaylistBox();
-  }
-
-  _initPlaylistBox() async {
-    playlistBox = await Hive.openBox("playlists");
-    for (int i = 0; i < playlistBox.length; i++) {
-      isPlayingMap[i] = false;
-    }
-    setState(() {});
-  }
-
-  _addPlaylist() {
-    showCupertinoModalPopup(
+  void _showDialog(String title, String message) {
+    showCupertinoDialog(
       context: context,
-      builder: (context) => CupertinoActionSheet(
-        title: const Text("Add Playlist"),
-        message: CupertinoTextField(
-          controller: _playlistController,
-          placeholder: "Playlist name",
-        ),
+      builder: (context) => CupertinoAlertDialog(
+        title: Text(title),
+        content: Text(message),
         actions: [
-          CupertinoActionSheetAction(
-            onPressed: () {
-              if (_playlistController.text.trim().isNotEmpty) {
-                playlistBox.add(_playlistController.text.trim());
-                isPlayingMap[playlistBox.length - 1] = false;
-                _playlistController.clear();
-                setState(() {});
-              }
-              Navigator.pop(context);
-            },
-            child: const Text("Add"),
+          CupertinoDialogAction(
+            child: const Text('OK'),
+            onPressed: () => Navigator.pop(context),
           ),
         ],
-        cancelButton: CupertinoActionSheetAction(
-          onPressed: () => Navigator.pop(context),
-          child: const Text("Cancel"),
-          isDefaultAction: true,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoPageScaffold(
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              CupertinoColors.systemGreen.withOpacity(0.1),
+              CupertinoColors.white,
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(height: 60),
+
+                Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: CupertinoColors.activeGreen,
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  child: const Icon(
+                    CupertinoIcons.cart_fill,
+                    size: 60,
+                    color: CupertinoColors.white,
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                const Text(
+                  'Welcome Back!',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: CupertinoColors.darkBackgroundGray,
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  'Sign in to continue ordering',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: CupertinoColors.secondaryLabel,
+                  ),
+                ),
+                const SizedBox(height: 48),
+
+                Container(
+                  decoration: BoxDecoration(
+                    color: CupertinoColors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: CupertinoColors.systemGrey5,
+                      width: 1,
+                    ),
+                  ),
+                  child: CupertinoTextField(
+                    controller: _emailController,
+                    placeholder: 'Email',
+                    prefix: const Padding(
+                      padding: EdgeInsets.only(left: 12),
+                      child: Icon(CupertinoIcons.mail, color: CupertinoColors.activeGreen),
+                    ),
+                    padding: const EdgeInsets.all(16),
+                    keyboardType: TextInputType.emailAddress,
+                    autocorrect: false,
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                Container(
+                  decoration: BoxDecoration(
+                    color: CupertinoColors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: CupertinoColors.systemGrey5,
+                      width: 1,
+                    ),
+                  ),
+                  child: CupertinoTextField(
+                    controller: _passwordController,
+                    placeholder: 'Password',
+                    prefix: const Padding(
+                      padding: EdgeInsets.only(left: 12),
+                      child: Icon(CupertinoIcons.lock_fill, color: CupertinoColors.activeGreen),
+                    ),
+                    suffix: CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      child: Icon(
+                        _obscurePassword ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
+                        color: CupertinoColors.activeGreen,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
+                    padding: const EdgeInsets.all(16),
+                    obscureText: _obscurePassword,
+                  ),
+                ),
+
+                const SizedBox(height: 8),
+
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    child: const Text(
+                      'Forgot Password?',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: CupertinoColors.activeGreen,
+                      ),
+                    ),
+                    onPressed: () {
+                      _showDialog('Reset Password', 'Please contact support to reset your password.');
+                    },
+                  ),
+                ),
+
+                const SizedBox(height: 32),
+
+                CupertinoButton.filled(
+                  onPressed: _isLoading ? null : _login,
+                  child: _isLoading
+                      ? const CupertinoActivityIndicator(color: CupertinoColors.white)
+                      : const Text(
+                    'Sign In',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
+                      "Don't have an account? ",
+                      style: TextStyle(color: CupertinoColors.secondaryLabel),
+                    ),
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      child: const Text(
+                        'Sign Up',
+                        style: TextStyle(
+                          color: CupertinoColors.activeGreen,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          CupertinoPageRoute(builder: (_) => SignUpPage()),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 
-  _deletePlaylist(int index) {
-    playlistBox.deleteAt(index);
-    isPlayingMap.remove(index);
-    final newMap = <int, bool>{};
-    for (int i = 0; i < playlistBox.length; i++) {
-      newMap[i] = isPlayingMap[i] ?? false;
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+}
+
+class SignUpPage extends StatefulWidget {
+  SignUpPage({super.key});
+
+  @override
+  State<SignUpPage> createState() => _SignUpPageState();
+}
+
+class _SignUpPageState extends State<SignUpPage> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _confirmPasswordController = TextEditingController();
+
+  bool _isLoading = false;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+
+  Future<void> _signUp() async {
+    if (_nameController.text.isEmpty ||
+        _emailController.text.isEmpty ||
+        _phoneController.text.isEmpty ||
+        _passwordController.text.isEmpty ||
+        _confirmPasswordController.text.isEmpty) {
+      _showDialog('Error', 'Please fill in all fields');
+      return;
     }
-    isPlayingMap = newMap;
-    setState(() {});
+
+    if (_passwordController.text != _confirmPasswordController.text) {
+      _showDialog('Error', 'Passwords do not match');
+      return;
+    }
+
+    if (_passwordController.text.length < 6) {
+      _showDialog('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    await Future.delayed(const Duration(seconds: 1));
+
+    final usersBox = Hive.box('users');
+
+    bool emailExists = false;
+    for (var key in usersBox.keys) {
+      final userData = usersBox.get(key);
+      if (userData['email'] == _emailController.text) {
+        emailExists = true;
+        break;
+      }
+    }
+
+    if (emailExists) {
+      setState(() => _isLoading = false);
+      _showDialog('Error', 'Email already registered');
+      return;
+    }
+
+    await usersBox.add({
+      'name': _nameController.text,
+      'email': _emailController.text,
+      'phone': _phoneController.text,
+      'password': _passwordController.text,
+      'createdAt': DateTime.now().toIso8601String(),
+    });
+
+    setState(() => _isLoading = false);
+
+    if (mounted) {
+      _showSuccessDialog();
+    }
   }
 
-  _togglePlayPause(int index) {
-    setState(() {
-      isPlayingMap[index] = !(isPlayingMap[index] ?? false);
-    });
+  void _showDialog(String title, String message) {
+    showCupertinoDialog(
+      context: context,
+      builder: (context) => CupertinoAlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('OK'),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSuccessDialog() {
+    showCupertinoDialog(
+      context: context,
+      builder: (context) => CupertinoAlertDialog(
+        title: const Text('Success!'),
+        content: const Text('Your account has been created successfully. Please login to continue.'),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('OK'),
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context);
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!Hive.isBoxOpen("playlists")) {
-      return const CupertinoPageScaffold(
-        navigationBar: CupertinoNavigationBar(
-          middle: Text("Playlists"),
-        ),
-        child: Center(child: CupertinoActivityIndicator()),
-      );
-    }
-
     return CupertinoPageScaffold(
       navigationBar: const CupertinoNavigationBar(
-        middle: Text("Playlists"),
+        middle: Text('Create Account'),
       ),
-      child: SafeArea(
-        child: Stack(
-          children: [
-            playlistBox.isEmpty
-                ? const Center(
-              child: Text(
-                "No playlists yet",
-                style: TextStyle(color: CupertinoColors.systemGrey),
-              ),
-            )
-                : ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              itemCount: playlistBox.length,
-              itemBuilder: (context, index) {
-                final playlistName = playlistBox.getAt(index).toString();
-                final isPlaying = isPlayingMap[index] ?? false;
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              CupertinoColors.systemGreen.withOpacity(0.05),
+              CupertinoColors.white,
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 20),
 
-                return Container(
-                  margin: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 10),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: CupertinoColors.darkBackgroundGray,
-                    borderRadius: BorderRadius.circular(12),
+                const Text(
+                  'Join QuickBite',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Create an account to start ordering',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: CupertinoColors.secondaryLabel,
+                  ),
+                ),
+                const SizedBox(height: 32),
+
+                _buildTextField(
+                  controller: _nameController,
+                  placeholder: 'Full Name',
+                  icon: CupertinoIcons.person_fill,
+                ),
+                const SizedBox(height: 16),
+
+                _buildTextField(
+                  controller: _emailController,
+                  placeholder: 'Email Address',
+                  icon: CupertinoIcons.mail,
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 16),
+
+                _buildTextField(
+                  controller: _phoneController,
+                  placeholder: 'Phone Number',
+                  icon: CupertinoIcons.phone_fill,
+                  keyboardType: TextInputType.phone,
+                ),
+                const SizedBox(height: 16),
+
+                _buildTextField(
+                  controller: _passwordController,
+                  placeholder: 'Password',
+                  icon: CupertinoIcons.lock_fill,
+                  obscureText: _obscurePassword,
+                  suffix: CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    child: Icon(
+                      _obscurePassword ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
+                      color: CupertinoColors.activeGreen,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _obscurePassword = !_obscurePassword;
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                _buildTextField(
+                  controller: _confirmPasswordController,
+                  placeholder: 'Confirm Password',
+                  icon: CupertinoIcons.lock_fill,
+                  obscureText: _obscureConfirmPassword,
+                  suffix: CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    child: Icon(
+                      _obscureConfirmPassword ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
+                      color: CupertinoColors.activeGreen,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _obscureConfirmPassword = !_obscureConfirmPassword;
+                      });
+                    },
+                  ),
+                ),
+
+                const SizedBox(height: 8),
+
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: CupertinoColors.systemGrey6,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          CupertinoButton(
-                            padding: EdgeInsets.zero,
-                            child: Icon(
-                              isPlaying ? CupertinoIcons.pause_fill : CupertinoIcons.play_fill,
-                              color: CupertinoColors.systemGreen,
-                            ),
-                            onPressed: () => _togglePlayPause(index),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            playlistName,
-                            style: const TextStyle(
-                              color: CupertinoColors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        child: const Icon(
-                          CupertinoIcons.delete,
-                          color: CupertinoColors.systemGrey,
+                      Text(
+                        'Password Requirements:',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
                         ),
-                        onPressed: () => _deletePlaylist(index),
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        '• At least 6 characters long',
+                        style: TextStyle(fontSize: 12, color: CupertinoColors.secondaryLabel),
                       ),
                     ],
                   ),
-                );
-              },
+                ),
+
+                const SizedBox(height: 32),
+
+                CupertinoButton.filled(
+                  onPressed: _isLoading ? null : _signUp,
+                  child: _isLoading
+                      ? const CupertinoActivityIndicator(color: CupertinoColors.white)
+                      : const Text(
+                    'Create Account',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Text(
+                      'Already have an account? ',
+                      style: TextStyle(color: CupertinoColors.secondaryLabel),
+                    ),
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      child: const Text(
+                        'Sign In',
+                        style: TextStyle(
+                          color: CupertinoColors.activeGreen,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                      },
+                    ),
+                  ],
+                ),
+              ],
             ),
-            Positioned(
-              bottom: 20,
-              right: 20,
-              child: CupertinoButton(
-                padding: const EdgeInsets.all(14),
-                color: CupertinoColors.systemGreen,
-                borderRadius: BorderRadius.circular(30),
-                child: const Icon(CupertinoIcons.plus),
-                onPressed: _addPlaylist,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextField({
+    required TextEditingController controller,
+    required String placeholder,
+    required IconData icon,
+    TextInputType? keyboardType,
+    bool obscureText = false,
+    Widget? suffix,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: CupertinoColors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: CupertinoColors.systemGrey5,
+          width: 1,
+        ),
+      ),
+      child: CupertinoTextField(
+        controller: controller,
+        placeholder: placeholder,
+        prefix: Padding(
+          padding: const EdgeInsets.only(left: 12),
+          child: Icon(icon, color: CupertinoColors.activeGreen, size: 20),
+        ),
+        suffix: suffix,
+        padding: const EdgeInsets.all(16),
+        keyboardType: keyboardType,
+        obscureText: obscureText,
+        autocorrect: false,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+}
+
+class FoodItem {
+  final String id;
+  final String name;
+  final double price;
+  final String imageUrl;
+  final String description;
+  final int prepTime;
+  final double rating;
+
+  FoodItem({
+    required this.id,
+    required this.name,
+    required this.price,
+    required this.imageUrl,
+    required this.description,
+    required this.prepTime,
+    required this.rating,
+  });
+}
+
+class HomePage extends StatefulWidget {
+  HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  final List<FoodItem> _cart = [];
+  final TextEditingController _searchController = TextEditingController();
+  String _selectedCategory = 'All';
+
+  final List<FoodItem> _foods = [
+    FoodItem(
+      id: '1',
+      name: 'Classic Burger',
+      price: 149.00,
+      imageUrl: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd',
+      description: 'Juicy beef patty with fresh lettuce, tomatoes, and our special sauce',
+      prepTime: 15,
+      rating: 4.5,
+    ),
+    FoodItem(
+      id: '2',
+      name: 'Margherita Pizza',
+      price: 299.00,
+      imageUrl: 'https://images.unsplash.com/photo-1604068549290-dea0e4a305ca',
+      description: 'Classic Italian pizza with fresh basil, mozzarella, and tomato sauce',
+      prepTime: 20,
+      rating: 4.8,
+    ),
+    FoodItem(
+      id: '3',
+      name: 'Sushi Platter',
+      price: 449.00,
+      imageUrl: 'https://images.unsplash.com/photo-1553621042-f6e147245754',
+      description: 'Assorted fresh sushi rolls with wasabi and ginger',
+      prepTime: 25,
+      rating: 4.7,
+    ),
+    FoodItem(
+      id: '4',
+      name: 'Caesar Salad',
+      price: 199.00,
+      imageUrl: 'https://images.unsplash.com/photo-1550304943-4f24f54ddde9',
+      description: 'Fresh romaine lettuce with Caesar dressing, croutons, and parmesan',
+      prepTime: 10,
+      rating: 4.3,
+    ),
+  ];
+
+  List<String> get categories {
+    Set<String> cats = {'All'};
+    for (var food in _foods) {
+      cats.add(food.name.split(' ').last);
+    }
+    return cats.toList();
+  }
+
+  List<FoodItem> get filteredFoods {
+    if (_selectedCategory == 'All') return _foods;
+    return _foods.where((f) => f.name.contains(_selectedCategory)).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoPageScaffold(
+      navigationBar: CupertinoNavigationBar(
+        middle: const Text('QuickBite'),
+        trailing: GestureDetector(
+          onTap: _navigateToCart,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              const Icon(CupertinoIcons.cart),
+              if (_cart.isNotEmpty)
+                Positioned(
+                  right: -6,
+                  top: -6,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: CupertinoColors.activeGreen,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      '${_cart.length}',
+                      style: const TextStyle(
+                        color: CupertinoColors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      child: SafeArea(
+        child: CustomScrollView(
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.all(16),
+              sliver: SliverToBoxAdapter(
+                child: CupertinoSearchTextField(
+                  controller: _searchController,
+                  placeholder: 'Search for food...',
+                  onChanged: (value) => setState(() {}),
+                ),
+              ),
+            ),
+
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              sliver: SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 40,
+                  child: ListView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: categories.length,
+                    itemBuilder: (context, index) {
+                      final category = categories[index];
+                      final isSelected = category == _selectedCategory;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: CupertinoButton(
+                          onPressed: () => setState(() => _selectedCategory = category),
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          color: isSelected
+                              ? CupertinoColors.activeGreen
+                              : CupertinoColors.systemGrey5,
+                          borderRadius: BorderRadius.circular(20),
+                          child: Text(
+                            category,
+                            style: TextStyle(
+                              color: isSelected
+                                  ? CupertinoColors.white
+                                  : CupertinoColors.black,
+                              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+
+            SliverPadding(
+              padding: const EdgeInsets.all(16),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 16,
+                  crossAxisSpacing: 16,
+                  childAspectRatio: 0.75,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                    final food = filteredFoods[index];
+                    return _FoodCard(
+                      food: food,
+                      onAddToCart: () => _addToCart(food),
+                    );
+                  },
+                  childCount: filteredFoods.length,
+                ),
               ),
             ),
           ],
@@ -519,519 +806,812 @@ class _PlaylistPageState extends State<PlaylistPage> {
       ),
     );
   }
-}
 
-class HomeList extends StatefulWidget {
-  final Box box;
-  const HomeList({super.key, required this.box});
-
-  @override
-  State<HomeList> createState() => _HomeListState();
-}
-
-class _HomeListState extends State<HomeList> {
-  late final Box box;
-  bool isDark = true;
-
-  String currentSong = "Ale";
-  String currentArtist = "The Bloomfields";
-  String albumArt =
-      "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTPsUJznruWzz5d-FtqBZ8aOuk-rPbPFFjyzw&s";
-  bool isPlaying = false;
-
-  @override
-  void initState() {
-    super.initState();
-    box = widget.box;
+  void _addToCart(FoodItem food) {
+    setState(() => _cart.add(food));
+    _showSnackBar('${food.name} added to cart');
   }
 
-  Widget miniPlayer() {
-    final bgColor = isDark ? const Color(0xFF181818) : CupertinoColors.systemGrey6;
-    final textColor = isDark ? CupertinoColors.white : CupertinoColors.black;
-    final subTextColor = isDark ? CupertinoColors.systemGrey2 : CupertinoColors.systemGrey;
-    final iconColor = isDark ? CupertinoColors.white : CupertinoColors.black;
+  void _showSnackBar(String message) {
+    showCupertinoModalPopup(
+      context: context,
+      builder: (context) => CupertinoPopupSurface(
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          color: CupertinoColors.black.withOpacity(0.8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(CupertinoIcons.check_mark_circled, color: CupertinoColors.white),
+              const SizedBox(width: 8),
+              Text(
+                message,
+                style: const TextStyle(color: CupertinoColors.white),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    Future.delayed(const Duration(seconds: 2), () => Navigator.pop(context));
+  }
 
+  void _navigateToCart() {
+    if (_cart.isNotEmpty) {
+      Navigator.push(
+        context,
+        CupertinoPageRoute(builder: (_) => CheckoutPage(cart: _cart)),
+      );
+    } else {
+      _showSnackBar('Your cart is empty');
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+}
+
+class _FoodCard extends StatelessWidget {
+  final FoodItem food;
+  final VoidCallback onAddToCart;
+
+  const _FoodCard({required this.food, required this.onAddToCart});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      height: 80,
       decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
-        boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 10, offset: Offset(0, -2))],
+        color: CupertinoColors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: CupertinoColors.systemGrey.withOpacity(0.2),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            child: Image.network(
+              food.imageUrl,
+              height: 120,
+              width: double.infinity,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  height: 120,
+                  color: CupertinoColors.systemGrey5,
+                  child: const Icon(CupertinoIcons.photo, size: 40),
+                );
+              },
+            ),
+          ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(albumArt, width: 52, height: 52, fit: BoxFit.cover),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(currentSong,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textColor)),
-                        const SizedBox(height: 2),
-                        Text(currentArtist,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 12, color: subTextColor)),
-                      ],
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        food.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Icon(CupertinoIcons.star_fill, size: 12, color: CupertinoColors.activeGreen),
+                          const SizedBox(width: 4),
+                          Text(
+                            food.rating.toString(),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          const SizedBox(width: 8),
+                          const Icon(CupertinoIcons.clock, size: 12),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${food.prepTime}min',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                   Row(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
+                      Text(
+                        '₱${food.price.toStringAsFixed(0)}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: CupertinoColors.activeGreen,
+                        ),
+                      ),
                       CupertinoButton(
-                          padding: EdgeInsets.zero,
-                          child: Icon(CupertinoIcons.backward_fill, size: 22, color: iconColor),
-                          onPressed: () {}),
-                      CupertinoButton(
-                          padding: EdgeInsets.zero,
-                          child: Icon(
-                              isPlaying ? CupertinoIcons.pause_circle_fill : CupertinoIcons.play_circle_fill,
-                              size: 42,
-                              color: iconColor),
-                          onPressed: () {
-                            setState(() {
-                              isPlaying = !isPlaying;
-                            });
-                          }),
-                      CupertinoButton(
-                          padding: EdgeInsets.zero,
-                          child: Icon(CupertinoIcons.forward_fill, size: 22, color: iconColor),
-                          onPressed: () {}),
+                        onPressed: onAddToCart,
+                        padding: EdgeInsets.zero,
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: const BoxDecoration(
+                            color: CupertinoColors.activeGreen,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            CupertinoIcons.add,
+                            size: 16,
+                            color: CupertinoColors.white,
+                          ),
+                        ),
+                      ),
                     ],
-                  )
+                  ),
                 ],
               ),
             ),
           ),
-          Container(
-            height: 2,
-            width: double.infinity,
-            color: isDark ? CupertinoColors.systemGrey4 : CupertinoColors.systemGrey2,
-            child: FractionallySizedBox(
-              alignment: Alignment.centerLeft,
-              widthFactor: 0.35,
-              child: Container(color: textColor),
-            ),
-          ),
         ],
       ),
     );
   }
+}
 
-  Widget _featureCard(String title, String imageUrl) {
-    return Container(
-      width: 160,
-      margin: const EdgeInsets.only(right: 12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        image: DecorationImage(image: NetworkImage(imageUrl), fit: BoxFit.cover),
-      ),
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          gradient: LinearGradient(
-            colors: [CupertinoColors.black.withOpacity(0.6), CupertinoColors.systemGrey.withOpacity(0.0)],
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-          ),
-        ),
-        child: Align(
-          alignment: Alignment.bottomLeft,
-          child: Text(title,
-              style: const TextStyle(color: CupertinoColors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-        ),
-      ),
-    );
-  }
+class CheckoutPage extends StatelessWidget {
+  final List<FoodItem> cart;
 
-  List<String> getBenefits(String currentPlan) {
-    if (currentPlan == "Free") {
-      return ["- Listen with ads", "- Limited skips", "- Only on one device"];
-    } else {
-      return ["- Listen to music ad-free", "- Download songs offline", "- Play on any device", "- Unlimited skips"];
-    }
-  }
+  const CheckoutPage({super.key, required this.cart});
 
   @override
   Widget build(BuildContext context) {
-    final textColor = isDark ? CupertinoColors.white : CupertinoColors.label;
+    double subtotal = 0;
+    for (var item in cart) {
+      subtotal += item.price;
+    }
+    const deliveryFee = 50.0;
+    final tax = subtotal * 0.12;
+    final total = subtotal + deliveryFee + tax;
 
-    return ValueListenableBuilder(
-      valueListenable: box.listenable(),
-      builder: (context, Box box, _) {
-        final String username = box.get("username") ?? "Sage";
-        final String currentPlan = box.get("plan") ?? "Free";
-        final double pricePaid = box.get("pricePaid") ?? 0.0;
-        final String planExpiry = box.get("planExpiry") ?? "No expiry";
-
-        return CupertinoPageScaffold(
-          child: SafeArea(
-            child: Stack(
-              children: [
-                ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return CupertinoPageScaffold(
+      navigationBar: const CupertinoNavigationBar(
+        middle: Text('Checkout'),
+      ),
+      child: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  const Text(
+                    'Your Order',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  ...cart.map((item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Row(
                       children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text("Hello, $username",
-                                style: TextStyle(color: textColor, fontSize: 28, fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 4),
-                            const Text("Enjoy your music experience",
-                                style: TextStyle(color: CupertinoColors.systemGrey, fontSize: 14)),
-                          ],
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            item.imageUrl,
+                            width: 60,
+                            height: 60,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return Container(
+                                width: 60,
+                                height: 60,
+                                color: CupertinoColors.systemGrey5,
+                                child: const Icon(CupertinoIcons.photo),
+                              );
+                            },
+                          ),
                         ),
-                        Container(
-                          width: 50,
-                          height: 50,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            image: DecorationImage(
-                              image: NetworkImage(
-                                  "https://i.pinimg.com/736x/a4/71/31/a47131039ecbeffaf3ba573730976eb8.jpg"),
-                              fit: BoxFit.cover,
-                            ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.name,
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              Text(
+                                '₱${item.price.toStringAsFixed(0)}',
+                                style: const TextStyle(color: CupertinoColors.activeGreen),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 24),
-                    Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                            colors: [CupertinoColors.systemGreen, CupertinoColors.systemTeal],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Your Plan",
-                              style: TextStyle(color: CupertinoColors.white, fontSize: 18, fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 8),
-                          Text(currentPlan,
-                              style: const TextStyle(color: CupertinoColors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 8),
-                          Text("Price Paid: ₱$pricePaid", style: const TextStyle(color: CupertinoColors.white, fontSize: 16)),
-                          const SizedBox(height: 4),
-                          Text("Valid until: $planExpiry", style: const TextStyle(color: CupertinoColors.white, fontSize: 16)),
-                          const SizedBox(height: 16),
-                          const Text("Benefits",
-                              style: TextStyle(color: CupertinoColors.white, fontSize: 18, fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 8),
-                          ...getBenefits(currentPlan).map((b) => Text(b, style: const TextStyle(color: CupertinoColors.white))).toList(),
-                        ],
-                      ),
+                  )).toList(),
+
+                  Container(
+                    height: 1,
+                    color: CupertinoColors.systemGrey5,
+                    margin: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+
+                  _buildPriceRow('Subtotal', subtotal),
+                  _buildPriceRow('Delivery Fee', deliveryFee),
+                  _buildPriceRow('Tax (12%)', tax),
+                  Container(
+                    height: 1,
+                    color: CupertinoColors.systemGrey5,
+                    margin: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  _buildPriceRow('Total', total, isTotal: true),
+
+                  const SizedBox(height: 24),
+
+                  const Text(
+                    'Delivery Address',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: CupertinoColors.systemGrey6,
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      height: 120,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        children: [
-                          _featureCard("Recommended Playlist", "https://encrypted-tbn2.gstatic.com/images?q=tbn:ANd9GcQ_CL_vmiqJmPosWnL6BQ_ccnCKo0_vGRZR5wLL64i3MrLaPM8X"),
-                          _featureCard("Top Charts", "https://i.scdn.co/image/ab676161000051744aac2151be750fecb674048a"),
-                          _featureCard("New Releases", "https://pickasso.spotifycdn.com/image/ab67c0de0000deef/dt/v1/img/thisisv3/1UwnrHfh8Kd8Y8Ax8a3qWy/en"),
-                        ],
-                      ),
+                    child: const Row(
+                      children: [
+                        Icon(CupertinoIcons.location_solid, color: CupertinoColors.activeGreen),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Home',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              Text(
+                                '123 Main Street, Makati City',
+                                style: TextStyle(color: CupertinoColors.secondaryLabel),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      height: 120,
-                      child: ListView(
-                        scrollDirection: Axis.horizontal,
-                        children: [
-                          _featureCard("Radio", "https://pickasso.spotifycdn.com/image/ab67c0de0000deef/dt/v1/img/radio/artist/2kxP07DLgs4xlWz8YHlvfh/de"),
-                          _featureCard("Your Favorites", "https://pickasso.spotifycdn.com/image/ab67c0de0000deef/dt/v1/img/thisisv3/6Dp4LInLyMVA2qhRqQ6AGL/en"),
-                          _featureCard("Trending Now", "https://preview.redd.it/walang-ibang-gugustuhin-kundi-ikaw-v0-ki3o8ath5z2d1.jpeg?auto=webp&s=869e87669e1d25f25e78d8e2eca2f5642e72a062"),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 90),
-                  ],
-                ),
-                Positioned(left: 0, right: 0, bottom: 0, child: miniPlayer()),
-              ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        );
-      },
-    );
-  }
-}
 
-class PlanPage extends StatefulWidget {
-  final Box box;
-  const PlanPage({super.key, required this.box});
-
-  @override
-  State<PlanPage> createState() => _PlanPageState();
-}
-
-class _PlanPageState extends State<PlanPage> {
-  late final Box box;
-
-  @override
-  void initState() {
-    super.initState();
-    box = widget.box;
-  }
-
-  Future<void> payNow(BuildContext context, String planName, int price, String duration) async {
-    showCupertinoDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const CupertinoAlertDialog(
-        title: Text("Connecting"),
-        content: CupertinoActivityIndicator(),
-      ),
-    );
-
-    String secretKey = "xnd_development_GLxc5Y02G2w5Sh2KjMVUUDKRcrHao7tgPNYAoE9TkgIPlZuKtczqjk9ZNIV";
-    String auth = 'Basic ${base64Encode(utf8.encode('$secretKey:'))}';
-    const url = "https://api.xendit.co/v2/invoices/";
-
-    try {
-      final response = await http.post(
-        Uri.parse(url),
-        headers: {"Authorization": auth, "Content-Type": "application/json"},
-        body: jsonEncode({
-          "external_id": "sub_${DateTime.now().millisecondsSinceEpoch}",
-          "amount": price,
-          "description": "Spotify $planName Subscription",
-          "success_redirect_url": "https://dashboard.xendit.co/success",
-        }),
-      );
-
-      final data = jsonDecode(response.body);
-      String invoiceUrl = data['invoice_url'];
-
-      if (!mounted) return;
-      Navigator.pop(context); // Close connecting dialog
-
-      Navigator.push(
-        context,
-        CupertinoPageRoute(
-          builder: (_) => PaymentPage(
-            url: invoiceUrl,
-            onPaid: () async {
-              // SAVE DATA HERE
-              await box.put("plan", planName);
-              await box.put("pricePaid", price.toDouble());
-              await box.put("planExpiry", duration);
-
-              if (!mounted) return;
-              Navigator.pop(context); // Close WebView
-
-              showCupertinoDialog(
-                context: context,
-                builder: (ctx) => CupertinoAlertDialog(
-                  title: const Text("Success"),
-                  content: Text("Subscription to $planName active!"),
-                  actions: [
-                    CupertinoButton(child: const Text("OK"), onPressed: () => Navigator.pop(ctx))
-                  ],
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: CupertinoColors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: CupertinoColors.systemGrey.withOpacity(0.2),
+                    blurRadius: 10,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: SafeArea(
+                child: CupertinoButton.filled(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      CupertinoPageRoute(
+                        builder: (_) => PaymentPage(amount: total),
+                      ),
+                    );
+                  },
+                  child: Text('Place Order • ₱${total.toStringAsFixed(0)}'),
                 ),
-              );
-            },
-          ),
-        ),
-      );
-    } catch (e) {
-      Navigator.pop(context);
-      debugPrint("Error: $e");
-    }
-  }
-
-  Widget planTile(BuildContext context, String planName, String price, String duration) {
-    return GestureDetector(
-      onTap: () => payNow(context, planName, int.parse(price), duration),
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [CupertinoColors.systemGreen, CupertinoColors.systemTeal],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(planName,
-                style: const TextStyle(color: CupertinoColors.white, fontWeight: FontWeight.bold, fontSize: 16),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 8),
-            Text("₱$price", style: const TextStyle(color: CupertinoColors.white, fontSize: 14)),
-            const SizedBox(height: 4),
-            Text(duration, style: const TextStyle(color: CupertinoColors.white, fontSize: 12)),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return CupertinoPageScaffold(
-      navigationBar: const CupertinoNavigationBar(middle: Text("Choose Your Plan")),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(12.0),
-          child: GridView.count(
-            crossAxisCount: 2,
-            mainAxisSpacing: 12,
-            crossAxisSpacing: 12,
-            children: [
-              planTile(context, "Individual", "199", "1 Month"),
-              planTile(context, "Duo", "299", "1 Month"),
-              planTile(context, "Family", "349", "1 Month"),
-              planTile(context, "Student", "99", "1 Month"),
-              planTile(context, "Premium 3 Months", "549", "3 Months"),
-              planTile(context, "Premium 6 Months", "999", "6 Months"),
-            ],
+  Widget _buildPriceRow(String label, double amount, {bool isTotal = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isTotal ? 18 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
+              color: isTotal ? CupertinoColors.black : CupertinoColors.secondaryLabel,
+            ),
           ),
-        ),
+          Text(
+            '₱${amount.toStringAsFixed(0)}',
+            style: TextStyle(
+              fontSize: isTotal ? 18 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
+              color: isTotal ? CupertinoColors.activeGreen : null,
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
 class PaymentPage extends StatefulWidget {
-  final String url;
-  final Future<void> Function() onPaid;
+  final double amount;
 
-  const PaymentPage({super.key, required this.url, required this.onPaid});
+  const PaymentPage({super.key, required this.amount});
 
   @override
   State<PaymentPage> createState() => _PaymentPageState();
 }
 
 class _PaymentPageState extends State<PaymentPage> {
-  late WebViewController controller;
-  bool isFinished = false;
+  late WebViewController _controller;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    controller = WebViewController()
+    _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onUrlChange: (UrlChange change) async {
-            final url = change.url ?? "";
-            if (url.contains("success") || url.contains("completed") || url.contains("callback")) {
-              if (!isFinished) {
-                isFinished = true;
-                await widget.onPaid();
-              }
+          onPageStarted: (_) => setState(() => _isLoading = true),
+          onPageFinished: (_) => setState(() => _isLoading = false),
+          onNavigationRequest: (request) {
+            if (request.url.contains('success') || request.url.contains('mock')) {
+              _handlePaymentSuccess();
             }
+            return NavigationDecision.navigate;
           },
         ),
       )
-      ..loadRequest(Uri.parse(widget.url));
+      ..loadRequest(Uri.parse('https://checkout.xendit.co/web/mock'));
+  }
+
+  void _handlePaymentSuccess() async {
+    final box = Hive.box('transactions');
+    await box.add({
+      'amount': widget.amount,
+      'date': DateTime.now().toIso8601String(),
+      'reference': 'TRX-${DateTime.now().millisecondsSinceEpoch}',
+    });
+
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        CupertinoPageRoute(builder: (_) => OrderTrackingPage()),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
-      navigationBar: const CupertinoNavigationBar(middle: Text("Payment")),
-      child: WebViewWidget(controller: controller),
+      navigationBar: CupertinoNavigationBar(
+        middle: const Text('Payment'),
+        trailing: _isLoading
+            ? const CupertinoActivityIndicator()
+            : null,
+      ),
+      child: Stack(
+        children: [
+          WebViewWidget(controller: _controller),
+          if (_isLoading)
+            const Center(child: CupertinoActivityIndicator()),
+          Positioned(
+            bottom: 20,
+            left: 20,
+            right: 20,
+            child: CupertinoButton(
+              color: CupertinoColors.white,
+              child: const Text('Simulate Payment Success'),
+              onPressed: _handlePaymentSuccess,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class Settings extends StatefulWidget {
-  final Box box;
-  const Settings({super.key, required this.box});
+class OrderTrackingPage extends StatefulWidget {
+  OrderTrackingPage({super.key});
 
   @override
-  State<Settings> createState() => _SettingsState();
+  State<OrderTrackingPage> createState() => _OrderTrackingPageState();
 }
 
-class _SettingsState extends State<Settings> {
-  Widget tiles(Color color, String title, dynamic trailing, IconData icon) {
-    return CupertinoListTile(
-        trailing: trailing,
-        leading: Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(7),
-            color: color,
+class _OrderTrackingPageState extends State<OrderTrackingPage> {
+  String _orderStatus = 'Order Confirmed';
+  LatLng _riderPosition = const LatLng(14.5995, 120.9842);
+  LatLng? _destinationPosition;
+  List<LatLng> _route = [];
+  Timer? _statusTimer;
+  Timer? _riderTimer;
+  int _currentRouteIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _startStatusTimer();
+  }
+
+  void _startStatusTimer() {
+    _statusTimer = Timer(const Duration(minutes: 1), () {
+      if (mounted) {
+        setState(() {
+          _orderStatus = 'Delivery is on the way';
+        });
+      }
+    });
+  }
+
+  List<LatLng> calculateAStarRoute(LatLng start, LatLng end) {
+    List<LatLng> path = [];
+
+    double distance = _calculateDistance(start, end);
+    int steps = (distance * 10).ceil().clamp(10, 50);
+
+    for (int i = 0; i <= steps; i++) {
+      double t = i / steps;
+
+      double lat = start.latitude + (end.latitude - start.latitude) * t;
+      double lng = start.longitude + (end.longitude - start.longitude) * t;
+
+      if (i > 0 && i < steps) {
+        lat += sin(t * pi) * 0.002;
+        lng += cos(t * pi) * 0.002;
+      }
+
+      path.add(LatLng(lat, lng));
+    }
+
+    return path;
+  }
+
+  double _calculateDistance(LatLng point1, LatLng point2) {
+    double latDiff = point1.latitude - point2.latitude;
+    double lngDiff = point1.longitude - point2.longitude;
+    return sqrt(latDiff * latDiff + lngDiff * lngDiff) * 111;
+  }
+
+  void _startRiderSimulation() {
+    if (_destinationPosition == null || _route.isEmpty) return;
+
+    _riderTimer?.cancel();
+    _currentRouteIndex = 0;
+
+    _riderTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_currentRouteIndex >= _route.length) {
+        timer.cancel();
+        _showDeliveryCompleteDialog();
+        return;
+      }
+
+      setState(() {
+        _riderPosition = _route[_currentRouteIndex];
+        _currentRouteIndex++;
+      });
+    });
+  }
+
+  void _showDeliveryCompleteDialog() {
+    showCupertinoDialog(
+      context: context,
+      builder: (context) => CupertinoAlertDialog(
+        title: const Text('Delivery Complete!'),
+        content: const Text('Your order has been delivered. Enjoy your meal!'),
+        actions: [
+          CupertinoDialogAction(
+            child: const Text('OK'),
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.popUntil(context, (route) => route.isFirst);
+            },
           ),
-          child: Icon(icon, size: 17, color: CupertinoColors.white),
-        ),
-        title: Text(title));
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _statusTimer?.cancel();
+    _riderTimer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
-      child: ListView(
+      navigationBar: CupertinoNavigationBar(
+        middle: Text(_orderStatus),
+        trailing: _orderStatus == 'Order Confirmed'
+            ? const Icon(CupertinoIcons.clock, color: CupertinoColors.activeGreen)
+            : const Icon(CupertinoIcons.car_detailed, color: CupertinoColors.activeGreen),
+      ),
+      child: Column(
         children: [
-          CupertinoListSection.insetGrouped(
-            children: [
-              tiles(
-                  CupertinoColors.systemPurple,
-                  "Biometrics",
-                  CupertinoSwitch(
-                      value: widget.box.get("biometrics") ?? false,
-                      onChanged: (value) {
-                        setState(() {
-                          widget.box.put("biometrics", value);
-                        });
-                      }),
-                  Icons.fingerprint_rounded),
-              GestureDetector(
-                  onTap: () {
-                    showCupertinoDialog(
-                        context: context,
-                        builder: (context) {
-                          return CupertinoAlertDialog(
-                            title: const Text("Sign out?"),
-                            actions: [
-                              CupertinoButton(
-                                  padding: EdgeInsets.zero,
-                                  child: const Text("Cancel"),
-                                  onPressed: () => Navigator.pop(context)),
-                              CupertinoButton(
-                                  padding: EdgeInsets.zero,
-                                  child: const Text("Yes"),
-                                  onPressed: () {
-                                    Navigator.pushReplacement(
-                                        context,
-                                        CupertinoPageRoute(
-                                            builder: (context) =>
-                                                Homepage(box: widget.box)));
-                                  }),
+          Container(
+            padding: const EdgeInsets.all(16),
+            color: CupertinoColors.white,
+            child: Row(
+              children: [
+                _buildTimelineItem('Order\nConfirmed', 0, isCompleted: true),
+                _buildTimelineLine(),
+                _buildTimelineItem('Preparing', 1,
+                    isCompleted: _orderStatus != 'Order Confirmed'),
+                _buildTimelineLine(),
+                _buildTimelineItem('On the Way', 2,
+                    isCompleted: _orderStatus == 'Delivery is on the way'),
+                _buildTimelineLine(),
+                _buildTimelineItem('Delivered', 3),
+              ],
+            ),
+          ),
+
+          Expanded(
+            child: Stack(
+              children: [
+                FlutterMap(
+                  options: MapOptions(
+                    initialCenter: _riderPosition,
+                    initialZoom: 14,
+                    onTap: (tapPosition, point) {
+                      setState(() {
+                        _destinationPosition = point;
+                        _route = calculateAStarRoute(_riderPosition, point);
+                      });
+                      _startRiderSimulation();
+                    },
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.example.quickbite',
+                    ),
+
+                    if (_destinationPosition != null)
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: _destinationPosition!,
+                            width: 40,
+                            height: 40,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: CupertinoColors.destructiveRed.withOpacity(0.2),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                CupertinoIcons.location_solid,
+                                color: CupertinoColors.destructiveRed,
+                                size: 30,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _riderPosition,
+                          width: 50,
+                          height: 50,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: CupertinoColors.activeGreen.withOpacity(0.2),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              CupertinoIcons.car_detailed,
+                              color: CupertinoColors.activeGreen,
+                              size: 35,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    if (_route.isNotEmpty)
+                      PolylineLayer(
+                        polylines: [
+                          Polyline(
+                            points: _route,
+                            color: CupertinoColors.activeGreen,
+                            strokeWidth: 4,
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+
+                if (_destinationPosition == null)
+                  Positioned(
+                    top: 20,
+                    left: 20,
+                    right: 20,
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: CupertinoColors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: CupertinoColors.black.withOpacity(0.1),
+                            blurRadius: 10,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(CupertinoIcons.hand_point_left, color: CupertinoColors.activeGreen),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Tap on the map to set your delivery location',
+                              style: TextStyle(fontSize: 14),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                Positioned(
+                  bottom: 20,
+                  left: 20,
+                  right: 20,
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: CupertinoColors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: CupertinoColors.black.withOpacity(0.1),
+                          blurRadius: 10,
+                          offset: const Offset(0, -2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: CupertinoColors.activeGreen.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(CupertinoIcons.person_fill, color: CupertinoColors.activeGreen),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Your Rider',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: CupertinoColors.secondaryLabel,
+                                ),
+                              ),
+                              Text(
+                                _destinationPosition != null
+                                    ? 'Rider is ${_calculateDistance(_riderPosition, _destinationPosition!).toStringAsFixed(1)} km away'
+                                    : 'Waiting for location',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                             ],
-                          );
-                        });
-                  },
-                  child: tiles(CupertinoColors.destructiveRed, "Signout",
-                      const Icon(CupertinoIcons.chevron_forward), Icons.logout))
-            ],
-          )
+                          ),
+                        ),
+                        CupertinoButton(
+                          padding: EdgeInsets.zero,
+                          child: const Icon(CupertinoIcons.chat_bubble_text_fill),
+                          onPressed: () {
+                            showCupertinoDialog(
+                              context: context,
+                              builder: (context) => CupertinoAlertDialog(
+                                title: const Text('Contact Rider'),
+                                content: const Text('This is a demo. In a real app, you could message your rider here.'),
+                                actions: [
+                                  CupertinoDialogAction(
+                                    child: const Text('OK'),
+                                    onPressed: () => Navigator.pop(context),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _buildTimelineItem(String label, int index, {bool isCompleted = false}) {
+    return Expanded(
+      child: Column(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isCompleted ? CupertinoColors.activeGreen : CupertinoColors.systemGrey5,
+              border: Border.all(
+                color: isCompleted ? CupertinoColors.activeGreen : CupertinoColors.systemGrey,
+                width: 2,
+              ),
+            ),
+            child: Center(
+              child: isCompleted
+                  ? const Icon(CupertinoIcons.check_mark, color: CupertinoColors.white, size: 20)
+                  : Text(
+                '${index + 1}',
+                style: const TextStyle(
+                  color: CupertinoColors.secondaryLabel,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12,
+              color: isCompleted ? CupertinoColors.black : CupertinoColors.secondaryLabel,
+              fontWeight: isCompleted ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimelineLine() {
+    return Container(
+      width: 30,
+      height: 2,
+      color: CupertinoColors.systemGrey5,
     );
   }
 }
